@@ -46,7 +46,7 @@ namespace Meem {
 	MqttMeem* MqttMeem::singleton = NULL;
 
 	// the MQTT client object
-	PubSubClient mqttClient((byte[]){ 192, 168, 0, 21 }, 1883, MqttMeem::inboundMessageCallback);
+	PubSubClient mqttClient((byte[]){ 192 }, 1883, MqttMeem::inboundMessageCallback);
 	
 	
 	/**
@@ -67,7 +67,7 @@ namespace Meem {
 	/**
 	 * connect to MQTT server
 	 */
-	boolean MqttMeem::connect(byte ip[], uint16_t port) {
+	boolean MqttMeem::connect(const byte ip[], uint16_t port) {
         
 #ifdef MEEM_DEBUG
 	   Serial.println("connecting to MQTT service");
@@ -78,24 +78,22 @@ namespace Meem {
 	   }
 	   mqttClient.setServer(ip, port);
 	
-	#ifdef MEEM_DEBUG
-	  //Serial.println("connecting MQTT client ");
-	#endif
-        
 	   boolean connected = mqttClient.connect(meemUUID);
 	   if (connected) {
-		  //Serial.print("connected to MQTT service for ");
-		  //Serial.println(meemUUID);
-
+#ifdef MEEM_DEBUG
+		  Serial.print("connected to MQTT service for ");
+		  Serial.println(meemUUID);
+#endif
 			// subscribe to inbound facets	
 			strcpy(charBuffer, meem_reg_topic);
 			strcat(charBuffer, "/");
 			strcat(charBuffer, this->meemUUID);
 			strcat(charBuffer, "/in/#");
 		  
-		  //Serial.print("subscribing to ");
-		  //Serial.println(charBuffer);
-	
+#ifdef MEEM_DEBUG
+		  Serial.print("subscribing to ");
+		  Serial.println(charBuffer);
+#endif	
 			if ( mqttClient.subscribe(charBuffer) == false) {
 #ifdef MEEM_DEBUG
 				  Serial.print("subscription failed");
@@ -103,14 +101,13 @@ namespace Meem {
 			}
 
 		  // add to meem registry
-		  strcpy(charBuffer, "(added ");
+		  strcpy(charBuffer, "(add ");
 		  strcat(charBuffer, this->meemUUID);
 		  strcat(charBuffer, ")");
 		  
 		  mqttClient.publish(meem_reg_topic, charBuffer);
 
 		  // set lifecycle state
-
 			strcpy(charBuffer, meem_reg_topic);
 			strcat(charBuffer, "/");
 			strcat(charBuffer, this->meemUUID);
@@ -136,24 +133,23 @@ namespace Meem {
         FacetDesc facetDesc = facets[facetIndex];
         
         strcpy(charBuffer, meem_reg_topic);
+        strcat(charBuffer, "/");
         strcat(charBuffer, meemUUID);
         strcat(charBuffer, "/");
         strcat(charBuffer, facetDesc.name);
 	   
-	#ifdef MEEM_DEBUG
+#ifdef MEEM_DEBUG
 	  Serial.print("sending message ");
 	  Serial.print(charBuffer);
 	  Serial.print(": ");
 	  Serial.println(payload);
-	#endif
+#endif
 	
 	   return mqttClient.publish(charBuffer,(uint8_t*)payload,strlen(payload),false);
 	}
 	
-
-	
 	/**
-	 *
+	 * Disconnect from the MQTT server.
 	 */
 	void MqttMeem::disconnect() {
         if (mqttClient.connected()) {

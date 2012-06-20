@@ -50,7 +50,7 @@ namespace Meem {
 		/**
 		 * connect to an MQTT server
 		 */
-		boolean connect(byte ip[], uint16_t port);
+		boolean connect(const byte ip[], uint16_t port);
         
 		/**
 		 * Write message on an outbound facet off this device.

@@ -1,13 +1,14 @@
 
 /**
  *
- * Web server exists for things on the network to read and set configuration.
+ * A device meem that interacts with the world via MQTT.  It depends on an IP adapter.  It has been tested with an ethernet shield.
  *
  * Configurable stuff to store in EEPROM:
+ *  - Meem UUID
  *  - MAC Address set.
- *  - Meem ID
  *  - MQTT server (should discover dynamically)
- 
+ *
+ * TODO feedback outbound facets for when inputs facets controlling devices output successfully change the output's value.
  * TODO subscribe to initial-content requests on this device's outbound facets. publish content when request made
  */
 
@@ -19,30 +20,9 @@
 #include <EthernetDHCP.h>
 #include <EthernetBonjour.h>
 #include <Meem.h>
+#include "MeemDevice.h"
 
 using namespace Meem;
-
-#define DEBUG 1
-
-// a MAC address for the controller.
-byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
-
-// default IP settings
-IPAddress ip(192, 168, 0, 112);
-
-// the MQTT
-byte mqttHost[] = { 192, 168, 0, 17 };
-int mqttPort = 1883;
-
-
-enum io_type { digital, analog, loopback };
-
-typedef struct {
-  io_type ioType;   // digital or analog
-  int pin;          // the IO pin
-  int direction;    // input or output
-  int lastValue;    // last value recorded for this pin
-} IoDesc;
 
 // facet descriptors
 const int numFacets = 14;
@@ -71,9 +51,9 @@ const FacetDesc facets[] = {
 IoDesc ioPorts[] = {
   // output pins
   { digital, 0, OUTPUT },
-  { digital, 1, OUTPUT },
-  { digital, 2, OUTPUT },
-  { digital, 3, OUTPUT },
+  { digital, 9, OUTPUT },
+  { digital, 12, OUTPUT },
+  { digital, 11, OUTPUT },
   { analog,  A0, OUTPUT },
   { analog,  A1, OUTPUT },
   
@@ -98,8 +78,7 @@ char meemUUID[] = {'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x',
 
 char strBuffer[128];
 
-/*
-
+#ifdef GENERATE_UUID
 const char HexChars[] = {
   '0', '1', '2', '3', '4', '5',
   '6', '7', '8', '9', 'a', 'b',
@@ -127,100 +106,102 @@ void createUUID(char* uuidString) {
   TrueRandom.uuid(uuid);
   uuidToString(uuid, uuidString);
 }
-*/
+#endif
 
 /**
- * Fact callback
+ * Facet callback.  This is called when a message is being received from the MQTT sever for an
+ * inbound Facet.
  */
 void inboundFacetCallback(int facetIndex, char* payload) {
   int len = strlen(payload);
 
-  //Serial.print((int)facetIndex);
-  
   if (facetIndex > 0) {
 #ifdef DEBUG
-    Serial.print(facets[facetIndex].name);
-    Serial.println(payload);
+    Serial.print(facets[facetIndex].name); Serial.println(payload);
 #endif 
-    IoDesc io = ioPorts[facetIndex];
-    if (io.ioType == digital) {
+    IoDesc port = ioPorts[facetIndex];
+    if (port.ioType == digital) {
       // get value from payload
       char str[8]; memset(str, NULL, 8);
-//      sscanf(payload, "(value %s)", &str);        //!!!! sscanf adds 2k
+      sscanf(payload, "(value %s)", &str);        //!!!! sscanf adds 2k
       int value = (strncmp("true", str, 4) == 0) ? HIGH : LOW;
-      digitalWrite(io.pin, value);
+      digitalWrite(port.pin, value);
+      // TODO send feedback on status of update
+#ifdef DEBUG
+      Serial.print("pin "); Serial.print(port.pin); Serial.print(" value: "); Serial.println(value);
+#endif
     }
-    else if (io.ioType == analog) {
+    else if (port.ioType == analog) {
       // 10 bit - from 0 to 1023
       int value = HIGH;
-//      sscanf(payload, "(value %d)", &value);
-      analogWrite(io.pin, value);
+      sscanf(payload, "(value %d)", &value);
+      analogWrite(port.pin, value);
+      // TODO send feedback on status of update
+#ifdef DEBUG
+      Serial.print("pin "); Serial.print(port.pin); Serial.print(" value: "); Serial.println(value);
+#endif
     }
   }
 }
 
+/**
+ * Instantiate the MQTT Meem object
+ */
+MqttMeem meem(meemUUID, facets, numFacets, inboundFacetCallback);
+
+
+#ifdef ZEROCONF_DISCOVER
+
+/**
+ * This function is called when an MQTT service has been discovered.
+ */
 void serviceFound(const char* type, MDNSServiceProtocol proto,
                   const char* name, const byte ipAddr[4],
                   unsigned short port,
                   const char* txtContent)
 {
   if (NULL == name) {
+#ifdef DEBUG
 	Serial.print("Finished type ");
 	Serial.println(type);
-  } else {
+	Serial.print(ipAddr[0]);
+#endif
+  } 
+  else {
+#ifdef DEBUG
     Serial.print("Found: '");
     Serial.print(name);
-    /*
-    Serial.print("' at ");
-    //Serial.print(ip_to_str(ipAddr));
-    Serial.print(", port ");
-    Serial.print(port);
-    Serial.println(" (TCP)");
+#endif
 
-    if (txtContent) {
-      Serial.print("\ttxt record: ");
-      
-      char buf[256];
-      char len = *txtContent++, i=0;;
-      while (len) {
-        i = 0;
-        while (len--)
-          buf[i++] = *txtContent++;
-        buf[i] = '\0';
-        Serial.print(buf);
-        len = *txtContent++;
-        
-        if (len)
-          Serial.print(", ");
-        else
-          Serial.println();
-      }
-    }
-    */
+    // (re)connect
+    meem.connect(ipAddr, port);
+    
+    // TODO store address in EEPROM
+    
   }
 }
+#endif // ZEROCONF_DISCOVER
 
+#ifdef WEBSERVER
 // Initialize the Ethernet server library with the IP address and port
-//EthernetServer server(80);
-
+EthernetServer server(80);
+#endif
 
 /**
  * TODO read settings from EEPROM
  */
 void readSettings() {
-  //  read meemUUID. if not exists then generate
-  
-  //createUUID(meemUUID);
-//  Serial.print("uuid: ");
-//  Serial.println(meemUUID);
+  //  TODO read meemUUID. if not exists then generate
+#ifdef GENERATE_UUID
+  createUUID(meemUUID);
+#endif // GENERATE_UUID
 }
 
 
-
+#ifdef WEBSERVER
 /**
  * Process web server request, if one exists
  */
- /*
 void handleWebServerRequests() {
     // listen for incoming clients
   EthernetClient client = server.available();
@@ -275,9 +256,7 @@ void handleWebServerRequests() {
     Serial.println("client disonnected");
   }
 }
-*/
-
-MqttMeem meem(meemUUID, facets, numFacets, inboundFacetCallback);
+#endif // WEBSERVER
 
 /**
  * Check device inputs for changes and if any exist, publish to proper MQTT topic.
@@ -285,13 +264,13 @@ MqttMeem meem(meemUUID, facets, numFacets, inboundFacetCallback);
 void checkDeviceInputs() {
   
   for (int i=0; i<numFacets; i++) {
-    IoDesc io = ioPorts[i];
-    if (io.direction == INPUT) {  // only insterested in inputs
+    IoDesc port = ioPorts[i];
+    if (port.direction == INPUT) {  // only insterested in inputs
       int value;
-      switch (io.ioType) {
+      switch (port.ioType) {
       case digital:
-        value = digitalRead(io.pin);
-        if (value != io.lastValue) {
+        value = digitalRead(port.pin);
+        if (value != port.lastValue) {
             const char *v = value ? "true" : "false";
             sprintf(strBuffer, "(value %s)", v);
             meem.sendToOutboundFacet(i, strBuffer);
@@ -299,9 +278,10 @@ void checkDeviceInputs() {
         }
         break;
       case analog:
-        value = analogRead(io.pin);
-        if (value != io.lastValue) {
+        value = analogRead(port.pin);
+        if ( abs(value - port.lastValue) > 100) {
           sprintf(strBuffer, "(value %i)", value);
+          meem.sendToOutboundFacet(i, strBuffer);
           ioPorts[i].lastValue = value;
         }
         break;
@@ -315,13 +295,12 @@ void checkDeviceInputs() {
  * Setup the device
  */
 void setup() {
-  /*
-  memset(meemUUID, '\0', 37);
-  */
  
+ #ifdef DEBUG
    // Open serial communications and wait for port to open:
   Serial.begin(9600);
-  
+#endif
+
   // read settings from EEPROM
   readSettings();
 
@@ -332,7 +311,10 @@ void setup() {
   // set the pin directions  
   for (int i=0; i<numFacets; i++) {
     IoDesc port = ioPorts[i];
-    if (port.direction != loopback) {
+    if (port.ioType != loopback) {
+#ifdef DEBUG
+      Serial.print("pin "); Serial.print(port.pin); Serial.print(" direction: "); Serial.println(port.direction);
+#endif
       pinMode(port.pin, port.direction);
     }
   }
@@ -341,11 +323,14 @@ void setup() {
   Serial.print("geting ip address: ");
 #endif
 
+#ifdef DHCP
   if (EthernetDHCP.begin(mac) == 0) {
     //Serial.println("Failed to configure Ethernet using DHCP");
     Ethernet.begin(mac, ip);        // initialize the ethernet device with default settings
   }
-//  Ethernet.begin(mac, ip);        // initialize the ethernet device with default settings
+#else
+  Ethernet.begin(mac, ip);        // initialize the ethernet device with default settings
+#endif // DHCP
 
   // TODO maybe broadcast this device on network.
   
@@ -354,10 +339,20 @@ void setup() {
   Serial.println(Ethernet.localIP());
 #endif
 
+#ifdef ZEROCONF_DISCOVER | ZEROCONF_REGISTER
   EthernetBonjour.begin();
+#endif
+
+#ifdef ZEROCONF_DISCOVER
   EthernetBonjour.setServiceFoundCallback(serviceFound);
   EthernetBonjour.startDiscoveringService("_mqtt", MDNSServiceTCP, 5000);
-  
+#endif
+
+#ifdef ZEROCONF_REGISTER
+  // register service
+  EthernetBonjour.addServiceRecord("meemduino._http", 80, MDNSServiceTCP);
+#endif
+
 //  server.begin();
 
   meem.setMeemUUID(meemUUID);
@@ -369,14 +364,22 @@ void setup() {
  * Main device loop.
  */
 void loop() {
-  
+
+#ifdef ZEROCONF_DISCOVER | ZEROCONF_REGISTER
   EthernetBonjour.run();
-  
-//  handleWebServerRequests();
+#endif
+
+#ifdef WEBSERVER
+  handleWebServerRequests();
+#endif
 
   checkDeviceInputs();
 
   meem.loop();
+  
+//  int lightLevel = analogRead(A2);
+//  Serial.println(lightLevel, DEC);
+//  delay(200);
 }
 
 
