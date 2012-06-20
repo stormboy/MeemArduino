@@ -32,6 +32,7 @@ Tested is a mosquitto server running on debian linux.  ZeroConf service register
 
 Create an avahi configuration file /etc/avahi/services/mosquitto.service
 
+<MTMarkdownOptions output='raw'>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
  <name replace-wildcards="yes">Mosquitto MQTT server on %h</name>
@@ -41,4 +42,5 @@ Create an avahi configuration file /etc/avahi/services/mosquitto.service
    <txt-record>info=A MQTT PubSub service! mqtt.org</txt-record>
   </service>
 </service-group>
+</MTMarkdownOptions>
 
