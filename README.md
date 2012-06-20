@@ -16,15 +16,15 @@ PubSubClient: http://knolleary.net/arduino-client-for-mqtt/
 Modified PubSubClient to allow the host ip and port to be set after construction.  Also changed some 
 char* to const char* to allow UUID array to be passed in as he client ID.
 
-TrueRandom:
+TrueRandom: http://code.google.com/p/tinkerit/wiki/TrueRandom
 
 For generating UUIDs
 
-Ethernet DHCP:
+Ethernet DHCP: http://gkaindl.com/software/arduino-ethernet/dhcp
 
 For dynamically determining IP address.
 
-Ethernet Bonjour:
+Ethernet Bonjour: http://gkaindl.com/software/arduino-ethernet/bonjour
 
 For discovering a MQTT server.
 
