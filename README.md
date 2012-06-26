@@ -11,23 +11,29 @@ This project is for an Arduino with an ethernet adapter.
 Dependent Libraries
 -------------------
 
-PubSubClient: http://knolleary.net/arduino-client-for-mqtt/
+###PubSubClient
+http://knolleary.net/arduino-client-for-mqtt/
 
 Modified PubSubClient to allow the host ip and port to be set after construction.  Also changed some 
 char* to const char* to allow UUID array to be passed in as he client ID.
 
-TrueRandom: http://code.google.com/p/tinkerit/wiki/TrueRandom
+###TrueRandom
+http://code.google.com/p/tinkerit/wiki/TrueRandom
 
 For generating UUIDs
 
-Ethernet DHCP: http://gkaindl.com/software/arduino-ethernet/dhcp
+###Ethernet DHCP
+http://gkaindl.com/software/arduino-ethernet/dhcp
 
 For dynamically determining IP address.
 
-Ethernet Bonjour: http://gkaindl.com/software/arduino-ethernet/bonjour
+###Ethernet Bonjour
+http://gkaindl.com/software/arduino-ethernet/bonjour
 
 For discovering a MQTT server.
 
+Environment
+-----------
 Tested is a mosquitto server running on debian linux.  ZeroConf service registering is done via the avahi-daemon.
 
 Create an avahi configuration file /etc/avahi/services/mosquitto.service
