@@ -7,200 +7,182 @@
 #include "Meem.h"
 #include <Arduino.h>
 #include <SPI.h>
-#include <PubSub.h>
-//#include <string.h>
+#include <Ethernet.h>
+#include <PubSubClient.h>
 
 namespace Meem {
-
-	/*
-		const char HexChars[] = {
-		  '0', '1', '2', '3', '4', '5',
-		  '6', '7', '8', '9', 'a', 'b',
-		  'c', 'd', 'e', 'f' 
-		};
-		
-		void uuidToString(uint8_t uuid[16], char uuidString[36]) {
-		  for (int i=0, j=0; i<16; i++) {
-			switch(i) {
-			  case 4:
-			  case 6:
-			  case 8:
-			  case 10:
-				uuidString[j++] = '-';
-			  default:
-				uint8_t num = uuid[i];
-				uuidString[j++] = HexChars[(num >> 4)];
-				uuidString[j++] = HexChars[(num & 0x0f)];
-			}
-		  }
-		}
-		
-		void createUUID(char* uuidString) {
-		  uint8_t uuid[16];
-		  TrueRandom.uuid(uuid);
-		  uuidToString(uuid, uuidString);
-		}
-	*/
 	
 	// static initialiser
 	MqttMeem* MqttMeem::singleton = NULL;
-
+	
+	char MqttMeem::charBuffer[STR_BUFFER_LENGTH];
+    
+        EthernetClient ethClient;
 	// the MQTT client object
-	PubSubClient mqttClient((byte[]){ 192 }, 1883, MqttMeem::inboundMessageCallback);
-	
-	
+	PubSubClient* mqttClient; //((byte[]){ 192 }, 1883, MqttMeem::inboundMessageCallback, ethClient);	
+
 	/**
 	 * initialise the Meem object
 	 */
-	MqttMeem::MqttMeem(const char* meemUUID, const FacetDesc* facets, int numFacets, void (*inboundFacetCallback)(int /*facetIndex*/, char* /*payload*/)) {
-        //memset(charBuffer, '\0', STR_BUFFER_LENGTH);
+	MqttMeem::MqttMeem(char* meemUUID, const FacetDesc* facets, int numFacets, void (*inboundFacetCallback)(int, const char*)) {
 		this->meemUUID = meemUUID;
-        
         this->numFacets = numFacets;
-	   this->facets = facets;
-	   this->inboundFacetCallback = inboundFacetCallback;
-	   
+        this->facets = facets;
+        this->inboundFacetCallback = inboundFacetCallback;
         this->singleton = this;
 	}
-		
 	
 	/**
 	 * connect to MQTT server
 	 */
-	boolean MqttMeem::connect(const byte ip[], uint16_t port) {
-        
+	boolean MqttMeem::connect(byte ip[], uint16_t port) {
+       
 #ifdef MEEM_DEBUG
-	   Serial.println("connecting to MQTT service");
+        Serial.println("connecting to MQTT service");
 #endif
         
-       if (mqttClient.connected()) {
-		 mqttClient.disconnect();
-	   }
-	   mqttClient.setServer(ip, port);
-	
-	   boolean connected = mqttClient.connect(meemUUID);
-	   if (connected) {
+        if (mqttClient != NULL && mqttClient->connected()) {
+            mqttClient->disconnect();
+        }
+        mqttClient = new PubSubClient(ip, port, MqttMeem::inboundMessageCallback, ethClient);
+        //mqttClient.setServer(ip, port);
+        
+        boolean connected = mqttClient->connect(meemUUID);
+        if (connected) {
 #ifdef MEEM_DEBUG
-		  Serial.print("connected to MQTT service for ");
-		  Serial.println(meemUUID);
+            Serial.print("connected to MQTT service for ");
+            Serial.println(meemUUID);
 #endif
 			// subscribe to inbound facets	
-			strcpy(charBuffer, meem_reg_topic);
-			strcat(charBuffer, "/");
-			strcat(charBuffer, this->meemUUID);
-			strcat(charBuffer, "/in/#");
-		  
+			strcpy(MqttMeem::charBuffer, meem_reg_topic);
+			strcat(MqttMeem::charBuffer, "/");
+			strcat(MqttMeem::charBuffer, this->meemUUID);
+			strcat(MqttMeem::charBuffer, "/in/#");
+            
 #ifdef MEEM_DEBUG
-		  Serial.print("subscribing to ");
-		  Serial.println(charBuffer);
+            Serial.print("subscribing to ");
+            Serial.println(MqttMeem::charBuffer);
 #endif	
-			if ( mqttClient.subscribe(charBuffer) == false) {
+			if ( mqttClient->subscribe(MqttMeem::charBuffer) == false) {
 #ifdef MEEM_DEBUG
-				  Serial.print("subscription failed");
+                Serial.print("subscription failed");
 #endif
 			}
-
-		  // add to meem registry
-		  strcpy(charBuffer, "(add ");
-		  strcat(charBuffer, this->meemUUID);
-		  strcat(charBuffer, ")");
-		  
-		  mqttClient.publish(meem_reg_topic, charBuffer);
-
-		  // set lifecycle state
-			strcpy(charBuffer, meem_reg_topic);
-			strcat(charBuffer, "/");
-			strcat(charBuffer, this->meemUUID);
-			strcat(charBuffer, "/lifecycle");
-		  
-		  mqttClient.publish(charBuffer, "(state ready)");
-	  }
-	
-	   return connected;
+            
+            // add to meem registry
+            strcpy(MqttMeem::charBuffer, "(add ");
+            strcat(MqttMeem::charBuffer, this->meemUUID);
+            strcat(MqttMeem::charBuffer, ")");
+            
+            mqttClient->publish(meem_reg_topic, MqttMeem::charBuffer);
+            
+            
+            // send facets
+//			strcpy(charBuffer, meem_reg_topic);
+//			strcat(charBuffer, "/");
+//			strcat(charBuffer, this->meemUUID);
+//            
+//            char* tmp = (char*) malloc (numFacets*60);
+//            strcpy(tmp, "(facets (");
+//            for (int i=0; i<numFacets; i++) {
+//                FacetDesc facet = facets[i];
+//                sprintf(tmp, "(%s %s %s) ", facet.name, facet.facetType, facet.direction);
+//            }
+//            strcat(tmp, "))");
+//            mqttClient->publish(charBuffer, tmp);
+//            free(tmp);
+            
+            // set lifecycle state
+			strcpy(MqttMeem::charBuffer, meem_reg_topic);
+			strcat(MqttMeem::charBuffer, "/");
+			strcat(MqttMeem::charBuffer, this->meemUUID);
+			strcat(MqttMeem::charBuffer, "/lifecycle");
+            
+            mqttClient->publish(charBuffer, "(state ready)");
+        }
+        
+        return connected;
 	}
 	
 	/**
 	 * The main loop
 	 */
 	boolean MqttMeem::loop() {
-	  return mqttClient.loop();
+        return mqttClient->loop();
 	}
 	
 	/**
 	 * Send a message to an outbound facet
 	 */
-	boolean MqttMeem::sendToOutboundFacet(int facetIndex, char* payload) {
+	boolean MqttMeem::sendToOutboundFacet(int facetIndex, const char* payload) {
         FacetDesc facetDesc = facets[facetIndex];
         
-        strcpy(charBuffer, meem_reg_topic);
-        strcat(charBuffer, "/");
-        strcat(charBuffer, meemUUID);
-        strcat(charBuffer, "/");
-        strcat(charBuffer, facetDesc.name);
-	   
+        strcpy(MqttMeem::charBuffer, meem_reg_topic);
+        strcat(MqttMeem::charBuffer, "/");
+        strcat(MqttMeem::charBuffer, meemUUID);
+        strcat(MqttMeem::charBuffer, "/out/");
+        strcat(MqttMeem::charBuffer, facetDesc.name);
+        
 #ifdef MEEM_DEBUG
-	  Serial.print("sending message ");
-	  Serial.print(charBuffer);
-	  Serial.print(": ");
-	  Serial.println(payload);
+        Serial.print("sending message ");
+        Serial.print(charBuffer);
+        Serial.print(": ");
+        Serial.println(payload);
 #endif
-	
-	   return mqttClient.publish(charBuffer,(uint8_t*)payload,strlen(payload),false);
+        
+        return mqttClient->publish(MqttMeem::charBuffer,(uint8_t*)payload,strlen(payload),false);
 	}
 	
 	/**
 	 * Disconnect from the MQTT server.
 	 */
 	void MqttMeem::disconnect() {
-        if (mqttClient.connected()) {
-           mqttClient.disconnect();   
+        if (mqttClient->connected()) {
+            mqttClient->disconnect();   
         }
 	}
-
+    
 	/**
-	 * handle message arrived
+	 * handle message arrived from MQTT
 	 */
 	void MqttMeem::inboundMessageCallback(char* topic, uint8_t* payload, unsigned int length) {
-        memset(charBuffer, NULL, STR_BUFFER_LENGTH);
-        memcpy(charBuffer, payload, length);
-
-	#ifdef MEEM_DEBUG
-//	  Serial.print("message received at ");
-//	  Serial.print(topic);
-//	  Serial.print(": ");
-//	  Serial.println(charBuffer);
-	#endif
-	
-	  // TODO check if configuration reqest
-	  int isConfigurationFacet = false;
-	  if (isConfigurationFacet) {
-		// TODO do config update
-		// 	    singleton->configure();
-	  }
-	  else {
-		if (MqttMeem::singleton && MqttMeem::singleton->inboundFacetCallback) {
-            MqttMeem::singleton->handleInboundMessage(topic, charBuffer, length);
-		}
-		else {
-		  //Serial.print("cannot sent incoming message; singleton not set");
-		}
-	  }
-	
+		memset(MqttMeem::charBuffer, NULL, STR_BUFFER_LENGTH);
+		memcpy(MqttMeem::charBuffer, payload, length);
+        
+#ifdef MEEM_DEBUG
+        //	  Serial.print("message received at ");
+        //	  Serial.print(topic);
+        //	  Serial.print(": ");
+        //	  Serial.println(charBuffer);
+#endif
+        
+        if (MqttMeem::singleton && MqttMeem::singleton->inboundFacetCallback) {
+            MqttMeem::singleton->handleInboundMessage(topic, MqttMeem::charBuffer, length);
+        }
+        
 	}
     
     void MqttMeem::handleInboundMessage(char* topic, char* message, unsigned int length)  {
-        //  locate facet index
-        int facetIndex = -1;
-        for (int i=0; i<this->numFacets; i++) {
-            FacetDesc facet = this->facets[i];
-            int n = strlen(topic) - strlen(facet.name);
-            if (strcmp(topic+n, facet.name) == 0) {
-                facetIndex = i;
-                break;
-            }
+        // TODO check if configuration reqest
+        int isConfigurationFacet = false;
+        if (isConfigurationFacet) {
+            // TODO do config update
+            // this->configure(message);
         }
-        
-        this->inboundFacetCallback(facetIndex, message);
+        else {
+            //  locate facet index
+            int facetIndex = -1;
+            for (int i=0; i<this->numFacets; i++) {
+                FacetDesc facet = this->facets[i];
+                int n = strlen(topic) - strlen(facet.name);
+                if (strcmp(topic+n, facet.name) == 0) {
+                    facetIndex = i;
+                    break;
+                }
+            }
+            
+            this->inboundFacetCallback(facetIndex, message);
+        }
     }
-
+    
 }

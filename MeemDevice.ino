@@ -8,24 +8,37 @@
  *  - MAC Address set.
  *  - MQTT server (should discover dynamically)
  *
- * TODO feedback outbound facets for when inputs facets controlling devices output successfully change the output's value.
+ * feedback outbound facets for when inputs facets controlling devices output successfully change the output's value.
+ *
+ * TODO reconnect to mqtt server if connection is lost. (retry at an interval)
  * TODO subscribe to initial-content requests on this device's outbound facets. publish content when request made
+ * TODO remove need for sscanf and printf
  */
 
 #include <SPI.h>
 #include <EEPROM.h>
 #include <Ethernet.h>
 #include <PubSubClient.h>
-#include <TrueRandom.h>
-#include <EthernetDHCP.h>
-#include <EthernetBonjour.h>
+
+//#ifdef DHCP
+  #include <EthernetDHCP.h>
+//#endif
+//#ifdef ZEROCONF_REGISTER | ZEROCONF_DISCOVER
+  #include <EthernetBonjour.h>
+//#endif
+
+#ifdef GENERATE_UUID
+  #include <TrueRandom.h>
+#endif
+
 #include <Meem.h>
 #include "MeemDevice.h"
 
 using namespace Meem;
 
 // facet descriptors
-const int numFacets = 14;
+const int numFacets = 18;
+const int feedbackOffset = 12;  // offset for the feedback facets for inputs
 const FacetDesc facets[] = {
   // inbound facets that write to device outputs
   { "binaryInput0", binary, INPUT },
@@ -43,30 +56,39 @@ const FacetDesc facets[] = {
   { "linearOutput0", linear, OUTPUT },
   { "linearOutput1", linear, OUTPUT },
 
-  { "loopInput0", binary, INPUT },
-  { "loopOutput0", binary, OUTPUT },
+  // feedback for the input facets
+  { "binaryFeedback0", binary, OUTPUT },
+  { "binaryFeedback1", binary, OUTPUT },
+  { "binaryFeedback2", binary, OUTPUT },
+  { "binaryFeedback3", binary, OUTPUT },
+  { "linearFeedback0", linear, OUTPUT },
+  { "linearFeedback1", linear, OUTPUT },
 };
 
 // The index of these IO ports matches the facet array
 IoDesc ioPorts[] = {
   // output pins
-  { digital, 0, OUTPUT },
+  { digital, 6, OUTPUT },
+  { digital, 7, OUTPUT },
+  { digital, 8, OUTPUT },
   { digital, 9, OUTPUT },
-  { digital, 12, OUTPUT },
-  { digital, 11, OUTPUT },
   { analog,  A0, OUTPUT },
   { analog,  A1, OUTPUT },
   
   // input pins
+  { digital, 0, INPUT },
+  { digital, 2, INPUT },
+  { digital, 3, INPUT },
   { digital, 4, INPUT },
-  { digital, 5, INPUT },
-  { digital, 6, INPUT },
-  { digital, 7, INPUT },
   { analog,  A2, INPUT },
   { analog,  A3, INPUT },
   
-  { loopback, 0, OUTPUT },    // sends message to INPUT 0
-  { loopback, 0, INPUT },     // receives message from INPUY 0
+  { loopback, 0, INPUT },    
+  { loopback, 0, INPUT },    
+  { loopback, 0, INPUT },  
+  { loopback, 0, INPUT },    
+  { loopback, 0, INPUT },   
+  { loopback, 0, INPUT },
 };
 
 // the UUID string for this device
@@ -76,73 +98,48 @@ char meemUUID[] = {'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x',
   '-', 'x', 'x', 'x', 'x', 
   '-', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', '\0' };
 
-char strBuffer[128];
+// character buffer
+#define CHAR_BUF_SIZE 128
+char charBuffer[CHAR_BUF_SIZE];
+
+// initialise the ethernet client library
+//EthernetClient client;
 
 #ifdef GENERATE_UUID
-const char HexChars[] = {
-  '0', '1', '2', '3', '4', '5',
-  '6', '7', '8', '9', 'a', 'b',
-  'c', 'd', 'e', 'f' 
-};
-
-void uuidToString(uint8_t uuid[16], char uuidString[37]) {
-  for (int i=0, j=0; i<16; i++) {
-    switch(i) {
-      case 4:
-      case 6:
-      case 8:
-      case 10:
-        uuidString[j++] = '-';
-      default:
-        uint8_t num = uuid[i];
-        uuidString[j++] = HexChars[(num >> 4)];
-        uuidString[j++] = HexChars[(num & 0x0f)];
+  const char HexChars[] = {
+    '0', '1', '2', '3', '4', '5',
+    '6', '7', '8', '9', 'a', 'b',
+    'c', 'd', 'e', 'f' 
+  };
+  
+  void uuidToString(uint8_t uuid[16], char uuidString[37]) {
+    for (int i=0, j=0; i<16; i++) {
+      switch(i) {
+        case 4:
+        case 6:
+        case 8:
+        case 10:
+          uuidString[j++] = '-';
+        default:
+          uint8_t num = uuid[i];
+          uuidString[j++] = HexChars[(num >> 4)];
+          uuidString[j++] = HexChars[(num & 0x0f)];
+      }
     }
   }
-}
-
-void createUUID(char* uuidString) {
-  uint8_t uuid[16];
-  TrueRandom.uuid(uuid);
-  uuidToString(uuid, uuidString);
-}
+  
+  void createUUID(char* uuidString) {
+    uint8_t uuid[16];
+    TrueRandom.uuid(uuid);
+    uuidToString(uuid, uuidString);
+  }
 #endif
 
 /**
- * Facet callback.  This is called when a message is being received from the MQTT sever for an
- * inbound Facet.
+ * declare the function
  */
-void inboundFacetCallback(int facetIndex, char* payload) {
-  int len = strlen(payload);
+void inboundFacetCallback(int facetIndex, const char* payload);
 
-  if (facetIndex > 0) {
-#ifdef DEBUG
-    Serial.print(facets[facetIndex].name); Serial.println(payload);
-#endif 
-    IoDesc port = ioPorts[facetIndex];
-    if (port.ioType == digital) {
-      // get value from payload
-      char str[8]; memset(str, NULL, 8);
-      sscanf(payload, "(value %s)", &str);        //!!!! sscanf adds 2k
-      int value = (strncmp("true", str, 4) == 0) ? HIGH : LOW;
-      digitalWrite(port.pin, value);
-      // TODO send feedback on status of update
-#ifdef DEBUG
-      Serial.print("pin "); Serial.print(port.pin); Serial.print(" value: "); Serial.println(value);
-#endif
-    }
-    else if (port.ioType == analog) {
-      // 10 bit - from 0 to 1023
-      int value = HIGH;
-      sscanf(payload, "(value %d)", &value);
-      analogWrite(port.pin, value);
-      // TODO send feedback on status of update
-#ifdef DEBUG
-      Serial.print("pin "); Serial.print(port.pin); Serial.print(" value: "); Serial.println(value);
-#endif
-    }
-  }
-}
 
 /**
  * Instantiate the MQTT Meem object
@@ -150,36 +147,37 @@ void inboundFacetCallback(int facetIndex, char* payload) {
 MqttMeem meem(meemUUID, facets, numFacets, inboundFacetCallback);
 
 
+
+
 #ifdef ZEROCONF_DISCOVER
-
-/**
- * This function is called when an MQTT service has been discovered.
- */
-void serviceFound(const char* type, MDNSServiceProtocol proto,
-                  const char* name, const byte ipAddr[4],
-                  unsigned short port,
-                  const char* txtContent)
-{
-  if (NULL == name) {
-#ifdef DEBUG
-	Serial.print("Finished type ");
-	Serial.println(type);
-	Serial.print(ipAddr[0]);
-#endif
-  } 
-  else {
-#ifdef DEBUG
-    Serial.print("Found: '");
-    Serial.print(name);
-#endif
-
-    // (re)connect
-    meem.connect(ipAddr, port);
-    
-    // TODO store address in EEPROM
-    
+  /**
+   * This function is called when an MQTT service has been discovered.
+   */
+  void serviceFound(const char* type, MDNSServiceProtocol proto,
+                    const char* name, const byte ipAddr[4],
+                    unsigned short port,
+                    const char* txtContent)
+  {
+    if (NULL == name) {
+  #ifdef DEBUG
+  	Serial.print("Finished type ");
+  	Serial.println(type);
+  	Serial.print(ipAddr[0]);
+  #endif
+    } 
+    else {
+  #ifdef DEBUG
+      Serial.print("Found: '");
+      Serial.print(name);
+  #endif
+  
+      // (re)connect
+      meem.connect(ipAddr, port);
+      
+      // TODO store address in EEPROM
+      
+    }
   }
-}
 #endif // ZEROCONF_DISCOVER
 
 #ifdef WEBSERVER
@@ -259,6 +257,48 @@ void handleWebServerRequests() {
 #endif // WEBSERVER
 
 /**
+ * Facet callback.  This is called when a message is being received from the MQTT sever for an
+ * inbound Facet.
+ */
+void inboundFacetCallback(int facetIndex, const char* payload) {
+  int len = strlen(payload);
+
+  if (facetIndex >= 0) {
+#ifdef DEBUG
+    Serial.print(facets[facetIndex].name); Serial.println(payload);
+#endif 
+    IoDesc port = ioPorts[facetIndex];
+    if (port.ioType == digital) {
+      // get value from payload
+      memset(charBuffer, NULL, CHAR_BUF_SIZE);
+      sscanf(payload, "(value %s)", &charBuffer);        //!!!! sscanf adds 2k
+      int value = (strncmp("true", charBuffer, 4) == 0) ? HIGH : LOW;
+      digitalWrite(port.pin, value);
+      
+      // send feedback on status of update
+      strcpy(charBuffer, payload);
+      meem.sendToOutboundFacet(facetIndex+feedbackOffset, charBuffer);
+#ifdef DEBUG
+      Serial.print("pin "); Serial.print(port.pin); Serial.print(" value: "); Serial.println(value);
+#endif
+    }
+    else if (port.ioType == analog) {
+      // 10 bit - from 0 to 1023
+      int value = HIGH;
+      sscanf(payload, "(value %d)", &value);
+      analogWrite(port.pin, value);
+      // send feedback on status of update
+      memset(charBuffer, NULL, CHAR_BUF_SIZE);
+      strcpy(charBuffer, payload);
+      meem.sendToOutboundFacet(facetIndex+feedbackOffset, charBuffer);
+#ifdef DEBUG
+      Serial.print("pin "); Serial.print(port.pin); Serial.print(" value: "); Serial.println(value);
+#endif
+    }
+  }
+}
+
+/**
  * Check device inputs for changes and if any exist, publish to proper MQTT topic.
  */
 void checkDeviceInputs() {
@@ -272,16 +312,16 @@ void checkDeviceInputs() {
         value = digitalRead(port.pin);
         if (value != port.lastValue) {
             const char *v = value ? "true" : "false";
-            sprintf(strBuffer, "(value %s)", v);
-            meem.sendToOutboundFacet(i, strBuffer);
+            sprintf(charBuffer, "(value %s)", v);
+            meem.sendToOutboundFacet(i, charBuffer);
             ioPorts[i].lastValue = value;
         }
         break;
       case analog:
         value = analogRead(port.pin);
         if ( abs(value - port.lastValue) > 100) {
-          sprintf(strBuffer, "(value %i)", value);
-          meem.sendToOutboundFacet(i, strBuffer);
+          sprintf(charBuffer, "(value %i)", value);
+          meem.sendToOutboundFacet(i, charBuffer);
           ioPorts[i].lastValue = value;
         }
         break;
@@ -292,11 +332,13 @@ void checkDeviceInputs() {
 
 
 /**
+ * SETUP
+ *
  * Setup the device
  */
 void setup() {
  
- #ifdef DEBUG
+#ifdef DEBUG
    // Open serial communications and wait for port to open:
   Serial.begin(9600);
 #endif
@@ -316,6 +358,16 @@ void setup() {
       Serial.print("pin "); Serial.print(port.pin); Serial.print(" direction: "); Serial.println(port.direction);
 #endif
       pinMode(port.pin, port.direction);
+      
+      // TODO initialise the inputs??
+      if (port.direction = INPUT) {
+        if (port.ioType == digital) {
+          digitalWrite(port.pin, HIGH);
+        }
+        else if (port.ioType == analog) {
+          analogWrite(port.pin, HIGH);
+        }
+      }
     }
   }
 
@@ -324,6 +376,7 @@ void setup() {
 #endif
 
 #ifdef DHCP
+  //if (Ethernet.begin(mac) == 0) {
   if (EthernetDHCP.begin(mac) == 0) {
     //Serial.println("Failed to configure Ethernet using DHCP");
     Ethernet.begin(mac, ip);        // initialize the ethernet device with default settings
@@ -361,6 +414,8 @@ void setup() {
 
 
 /**
+ * LOOP
+ *
  * Main device loop.
  */
 void loop() {
@@ -376,10 +431,6 @@ void loop() {
   checkDeviceInputs();
 
   meem.loop();
-  
-//  int lightLevel = analogRead(A2);
-//  Serial.println(lightLevel, DEC);
-//  delay(200);
 }
 
 

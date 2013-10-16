@@ -27,37 +27,37 @@ namespace Meem {
 
     #define STR_BUFFER_LENGTH 128
 	
-	static char charBuffer[STR_BUFFER_LENGTH];
     
-	static char meem_reg_topic[] = "meem/registry";
+	static char meem_reg_topic[] = "meem";
 
 	/**
 	 * A MQTT Meem
 	 */
 	class MqttMeem {
-        
+		static char charBuffer[STR_BUFFER_LENGTH];
+ 
 	public:
 		
 		/**
 		 * constructor
 		 */
-		MqttMeem(const char* meemUUID, const FacetDesc* facets, int numFacets, void (*inboundFacetCallback)(int /*facetIndex*/, char* /*payload*/));
+		MqttMeem(char* meemUUID, const FacetDesc* facets, int numFacets, void (*inboundFacetCallback)(int /*facetIndex*/, const char* /*payload*/));
         
 		void setMeemUUID(const char* uuid) {
-            this->meemUUID = meemUUID;
+                this->meemUUID = meemUUID;
 		}
         
 		/**
 		 * connect to an MQTT server
 		 */
-		boolean connect(const byte ip[], uint16_t port);
+		boolean connect( byte ip[], uint16_t port);
         
 		/**
 		 * Write message on an outbound facet off this device.
          * This published a message to the MQTT sevice with a topic representing the
          * outbound facet.
 		 */
-		boolean sendToOutboundFacet(int facetIndex, char* payload);
+		boolean sendToOutboundFacet(int facetIndex, const char* payload);
         
         /**
          * Process incoming messages from the subscription.
@@ -75,11 +75,11 @@ namespace Meem {
 		static void inboundMessageCallback(char* topic, uint8_t* payload, unsigned int length);
         
 	private:
-	
+
 		static MqttMeem* singleton;
 	
 		// string representation of the meem's UIUD
-		const char* meemUUID;			// string representation of meem uuid
+		char* meemUUID;			// string representation of meem uuid
         
 		int numFacets;
 		
@@ -91,10 +91,13 @@ namespace Meem {
 		// load configuration from EEPROM
 		void loadConfig() {}
 		
-        void handleInboundMessage(char* topic, char* message, unsigned int length);
+		void handleInboundMessage(char* topic, char* message, unsigned int length);
 		
 		// a function to send the facet message on
-		void (*inboundFacetCallback)(int /*facetIndex*/, char* /*message*/);
+		void (*inboundFacetCallback)(int /*facetIndex*/, const char* /*message*/);
+        
+		// a function to send confi messages on
+		void (*inboundConfig)(char* /* config message*/);
 
 	};
 

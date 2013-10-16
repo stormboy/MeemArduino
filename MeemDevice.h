@@ -11,7 +11,7 @@
 //#define ZEROCONF_DISCOVER 1
 
 // to enable DHCP
-//#define DHCP 1
+#define DHCP 1
 
 // to generate a UUID
 //#define GENERATE_UUID 1
